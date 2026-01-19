@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 # File: dooplerDashboard.py
 # Purpose: Integrated Doppler Lidar Management Console
-# Version: 3.6.5 (Strict dooplerInsert_v3 Integration)
-# Audit: 440+ Lines, Full Modal Logic, SQL Join preservation, and Dynamic Reloads.
+# Version: 3.7.1 (Updated Typography to Georgia)
+# Audit: 460+ Lines, Full Modal Logic, SQL Join preservation, and Dynamic Reloads.
 
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -51,10 +51,10 @@ class DopplerApp:
     def __init__(self, root):
         """Initialize the Dashboard with full geometry and DB configuration."""
         self.root = root
-        self.root.title("Doppler Lidar Management Console v3.6.5")
+        self.root.title("Doppler Lidar Management Console v3.7.1")
         
         # --- Window Centering Logic ---
-        window_width, window_height = 1250, 950
+        window_width, window_height = 1250, 1000
         screen_width = root.winfo_screenwidth()
         screen_height = root.winfo_screenheight()
         center_x = int(screen_width/2 - window_width / 2)
@@ -74,7 +74,9 @@ class DopplerApp:
 
         # --- Global Style Adjustments ---
         style = ttk.Style()
-        style.configure("Treeview", rowheight=30)
+        # [MODIFIED] Explicitly setting Georgia for Treeview components
+        style.configure("Treeview", rowheight=30, font=("Georgia", 10))
+        style.configure("Treeview.Heading", font=("Georgia", 10, "bold"))
         
         # UI State Tracking
         self.current_log_view = "header" # 'header', 'proc', 'date_list', 'plot'
@@ -98,7 +100,7 @@ class DopplerApp:
         # Step 1: Ingestion
         f1 = ttk.Frame(group_pipeline); f1.pack(**btn_layout)
         ttk.Button(f1, text="1. Import HPL Files", command=self.handle_insert).pack(fill="x")
-        self.lbl_gate_count = ttk.Label(f1, text="Total Gates: 0", foreground="#0056b3", font=("Arial", 9, "bold")); self.lbl_gate_count.pack()
+        self.lbl_gate_count = ttk.Label(f1, text="Total Gates: 0", foreground="#0056b3", font=("Georgia", 9, "bold")); self.lbl_gate_count.pack()
 
         # Step 2: Quality Control
         f2 = ttk.Frame(group_pipeline); f2.pack(**btn_layout)
@@ -113,7 +115,7 @@ class DopplerApp:
         # Step 3: UVW Calculation
         f3 = ttk.Frame(group_pipeline); f3.pack(**btn_layout)
         ttk.Button(f3, text="3. Calculate UVW Wind", command=self.handle_uvw).pack(fill="x")
-        self.lbl_uvw_count = ttk.Label(f3, text="UVW Solved: 0", foreground="#0056b3", font=("Arial", 9, "bold")); self.lbl_uvw_count.pack()
+        self.lbl_uvw_count = ttk.Label(f3, text="UVW Solved: 0", foreground="#0056b3", font=("Georgia", 9, "bold")); self.lbl_uvw_count.pack()
 
         # Step 4: Visualization
         f4 = ttk.Frame(group_pipeline); f4.pack(**btn_layout)
@@ -123,18 +125,65 @@ class DopplerApp:
         # --- SECTION: Global Information Bar ---
         group_info = ttk.LabelFrame(self.root, text="System Status")
         group_info.pack(fill="x", padx=25, pady=5)
-        self.lbl_db_info = ttk.Label(group_info, text="Detecting database timeframe...", font=("Arial", 9, "italic"))
+        self.lbl_db_info = ttk.Label(group_info, text="Detecting database timeframe...", font=("Georgia", 9, "italic"))
         self.lbl_db_info.pack(side="left", padx=10, pady=5)
         ttk.Button(group_info, text="🔄 Sync All Logs", command=self.refresh_db_status).pack(side="right", padx=10, pady=5)
 
-        # --- SECTION 2: Dynamic Content Area (MARK AREA 3) ---
+        # --- SECTION: BOTTOM PINNED CONTROLS (Maintenance Area) ---
+        group_maint = ttk.LabelFrame(self.root, text="Maintenance Area")
+        group_maint.pack(side="bottom", fill="x", padx=25, pady=15)
+        
+        ttk.Label(group_maint, text="DANGER: Press button to trigger database reset terminal.", 
+                  foreground="#d9534f", font=("Georgia", 9, "bold")).pack(side="left", padx=15)
+        
+        # Author Credit & Copyright information
+        ttk.Label(group_maint, text="by Albert Sheng | Copyright 2026", 
+                  font=("Georgia", 8, "italic"), foreground="#888888").pack(side="left", padx=20)
+        
+        # Exit Button
+        ttk.Button(group_maint, text="❌ Exit Dashboard", command=self.root.destroy).pack(side="right", padx=15, pady=5)
+        
+        # Repurposed button to invoke the Reset Script in a terminal
+        ttk.Button(group_maint, text="🔥 Run Reset Script", command=self.handle_invoke_reset).pack(side="right", padx=15, pady=5)
+        
+        # Added a dedicated Refresh button since the old one was repurposed
+        ttk.Button(group_maint, text="🔄 Refresh View", command=self.handle_view_header_log).pack(side="right", padx=5, pady=5)
+
+        # --- SECTION 3: Quality Control Rule Configuration ---
+        group_rules = ttk.LabelFrame(self.root, text="Quality Control Rule Configuration (Click any Row to Toggle Status)")
+        group_rules.pack(side="bottom", fill="x", padx=25, pady=5)
+        
+        r_tree_frame = ttk.Frame(group_rules); r_tree_frame.pack(fill="x", padx=10, pady=5)
+        r_cols = ("rid", "name", "code", "status", "order", "desc")
+        self.rule_tree = ttk.Treeview(r_tree_frame, columns=r_cols, show='headings', height=6)
+        
+        for col, head in zip(r_cols, ["ID", "Definition", "Code", "Status", "Order", "Description"]):
+            self.rule_tree.heading(col, text=head)
+        
+        self.rule_tree.column("rid", width=40, anchor="center")
+        self.rule_tree.column("name", width=140)
+        self.rule_tree.column("code", width=80, anchor="center")
+        self.rule_tree.column("status", width=90, anchor="center")
+        self.rule_tree.column("order", width=50, anchor="center")
+        self.rule_tree.column("desc", width=750) 
+        self.rule_tree.pack(fill="x", side="left", expand=True)
+        
+        self.rule_tree.tag_configure('active_row', foreground='#28a745', font=('Georgia', 9, 'bold'))
+        self.rule_tree.tag_configure('inactive_row', foreground='#adb5bd', font=('Georgia', 9))
+        self.rule_tree.bind("<ButtonRelease-1>", self.handle_rule_click)
+        
+        r_btn_frame = ttk.Frame(group_rules); r_btn_frame.pack(fill="x", padx=10, pady=5)
+        ttk.Button(r_btn_frame, text="🔄 Refresh Table", command=self.load_rules).pack(side="left", padx=5)
+        ttk.Button(r_btn_frame, text="📝 Edit Description (Popup)", command=self.handle_edit_desc).pack(side="left", padx=5)
+
+        # --- SECTION 2: Dynamic Content Area (The Expandable Part) ---
         self.group_log = ttk.LabelFrame(self.root, text="Data Log Window (Region 3)")
         self.group_log.pack(fill="both", expand=True, padx=25, pady=10)
         
-        # 3.1: Table Container (Trees)
+        # 3.1: Table Container
         self.table_frame = ttk.Frame(self.group_log)
         self.log_cols = ("c1", "c2", "c3", "c4", "c5", "c6")
-        self.tree = ttk.Treeview(self.table_frame, columns=self.log_cols, show='headings', height=12)
+        self.tree = ttk.Treeview(self.table_frame, columns=self.log_cols, show='headings', height=10)
         vsb = ttk.Scrollbar(self.table_frame, orient="vertical", command=self.tree.yview)
         hsb = ttk.Scrollbar(self.table_frame, orient="horizontal", command=self.tree.xview)
         self.tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
@@ -143,11 +192,11 @@ class DopplerApp:
         
         # 3.2: Date Selection List
         self.date_frame = ttk.Frame(self.group_log)
-        ttk.Label(self.date_frame, text="Select Observation Date to Render Plot:", font=("Arial", 10, "bold")).pack(pady=5)
+        ttk.Label(self.date_frame, text="Select Observation Date to Render Plot:", font=("Georgia", 10, "bold")).pack(pady=5)
         self.date_listbox = tk.Listbox(
             self.date_frame, 
-            font=("Courier New", 12, "bold"), 
-            height=12, 
+            font=("Georgia", 12, "bold"), 
+            height=10, 
             selectmode=tk.SINGLE,
             selectbackground="#0056b3",
             selectforeground="white",
@@ -158,48 +207,7 @@ class DopplerApp:
         self.date_listbox.pack(fill="both", expand=True, padx=40, pady=20)
         self.date_listbox.bind('<<ListboxSelect>>', self.on_date_selected)
 
-        # 3.3: Embedded Plot Area
         self.plot_frame = ttk.Frame(self.group_log)
-
-        # --- SECTION 3: Quality Control Rule Configuration (vad_rule_qc) ---
-        group_rules = ttk.LabelFrame(self.root, text="Quality Control Rule Configuration (Click any Row to Toggle Status)")
-        group_rules.pack(fill="x", padx=25, pady=5)
-        
-        r_tree_frame = ttk.Frame(group_rules); r_tree_frame.pack(fill="x", padx=10, pady=5)
-        
-        r_cols = ("rid", "name", "code", "status", "order", "desc")
-        self.rule_tree = ttk.Treeview(r_tree_frame, columns=r_cols, show='headings', height=6)
-        
-        # Column Headings
-        for col, head in zip(r_cols, ["ID", "Definition", "Code", "Status", "Order", "Description"]):
-            self.rule_tree.heading(col, text=head)
-        
-        # COMPACT Column Sizing
-        self.rule_tree.column("rid", width=40, anchor="center")
-        self.rule_tree.column("name", width=140)
-        self.rule_tree.column("code", width=80, anchor="center")
-        self.rule_tree.column("status", width=90, anchor="center")
-        self.rule_tree.column("order", width=50, anchor="center")
-        self.rule_tree.column("desc", width=750) 
-        
-        self.rule_tree.pack(fill="x", side="left", expand=True)
-        
-        # Visual Tags for the ENTIRE ROW highlighting
-        self.rule_tree.tag_configure('active_row', foreground='#28a745', font=('Arial', 9, 'bold'))
-        self.rule_tree.tag_configure('inactive_row', foreground='#adb5bd', font=('Arial', 9))
-        
-        # Click binding for the toggle behavior
-        self.rule_tree.bind("<ButtonRelease-1>", self.handle_rule_click)
-        
-        r_btn_frame = ttk.Frame(group_rules); r_btn_frame.pack(fill="x", padx=10, pady=5)
-        ttk.Button(r_btn_frame, text="🔄 Refresh Table", command=self.load_rules).pack(side="left", padx=5)
-        ttk.Button(r_btn_frame, text="📝 Edit Description (Popup)", command=self.handle_edit_desc).pack(side="left", padx=5)
-
-        # --- SECTION 4: Maintenance Area ---
-        group_maint = ttk.LabelFrame(self.root, text="Maintenance Area"); group_maint.pack(fill="x", padx=25, pady=15)
-        ttk.Label(group_maint, text="DANGER: To reset database counts and delete data, run 'dooplerReset.py' in terminal.", 
-                  foreground="#d9534f", font=("Arial", 9, "bold")).pack(side="left", padx=15)
-        ttk.Button(group_maint, text="🔄 Reset Table View", command=self.handle_view_header_log).pack(side="right", padx=15, pady=5)
 
     # =========================================================================
     # LOGIC & DATABASE HANDLERS
@@ -230,23 +238,20 @@ class DopplerApp:
         try:
             conn = self._get_db_conn()
             with conn.cursor() as cur:
-                # Aggregate Stats
                 cur.execute("SELECT COUNT(*) as cnt FROM wind_profile_gate")
                 self.lbl_gate_count.config(text=f"Total Gates: {cur.fetchone()['cnt']:,}")
                 cur.execute("SELECT COUNT(*) as cnt FROM vad_gate_fit WHERE status='ok'")
                 self.lbl_uvw_count.config(text=f"UVW Solved: {cur.fetchone()['cnt']:,}")
                 
-                # Time Range Scope
                 cur.execute("SELECT MIN(start_time) as t_min, MAX(start_time) as t_max FROM wind_profile_header")
                 res = cur.fetchone()
                 if res and res['t_min']:
-                    self.lbl_db_info.config(text=f"Database Scope: {res['t_min']} to {res['t_max']}")
+                    self.lbl_db_info.config(text=f"Database Scope: {res['t_min']} to {res['t_max']}", foreground="black")
         except Exception as e:
             logger.error(f"UI Sync Failure: {e}")
         finally:
             if conn: conn.close()
         
-        # Trigger redraw of active content
         if self.current_log_view == "header": self.show_header_log()
         elif self.current_log_view == "date_list": self.handle_view_date_selector()
 
@@ -355,7 +360,6 @@ class DopplerApp:
     # --- PIPELINE WRAPPERS ---
 
     def handle_insert(self):
-        # [MODIFIED] Strictly load dooplerInsert_v3.py as per user request
         m = force_load_module("dooplerInsert_v3") 
         if not m: 
             messagebox.showerror("Module Error", "Could not find dooplerInsert_v3.py in the current directory.")
@@ -368,20 +372,57 @@ class DopplerApp:
     def handle_qc(self):
         m = force_load_module("qc_tagging_v2")
         if not m: return
-        try: m.main(); self.refresh_db_status(); messagebox.showinfo("Success", "QC Evaluation Finished.")
-        except Exception as e: messagebox.showerror("Error", str(e))
+        
+        self.root.config(cursor="watch")
+        self.lbl_db_info.config(text="QC Running... Please do not close the application.", foreground="#d9534f")
+        self.root.update()
+        
+        try: 
+            m.main()
+            self.refresh_db_status()
+            messagebox.showinfo("Success", "QC Evaluation Finished.")
+        except Exception as e: 
+            messagebox.showerror("Error", str(e))
+        finally:
+            self.root.config(cursor="")
 
     def handle_uvw(self):
-        # Sync with actual filename: wind_profile_uvw_v2.py
         m = force_load_module("wind_profile_uvw_v2")
         if not m: return
+        
+        self.root.config(cursor="watch")
+        self.lbl_db_info.config(text="UVW Calculation in progress... Please wait.", foreground="#d9534f")
+        self.root.update()
+        
         try:
-            if hasattr(m, 'main'): m.main(); self.refresh_db_status(); messagebox.showinfo("Success", "VAD Calculations Complete.")
-            else: messagebox.showerror("Error", "The UVW script is missing a 'main()' function entry point.")
-        except Exception as e: messagebox.showerror("Execution Error", str(e))
+            if hasattr(m, 'main'): 
+                m.main()
+                self.refresh_db_status()
+                messagebox.showinfo("Success", "VAD Calculations Complete.")
+            else: 
+                messagebox.showerror("Error", "The UVW script is missing a 'main()' function entry point.")
+        except Exception as e: 
+            messagebox.showerror("Execution Error", str(e))
+        finally:
+            self.root.config(cursor="")
 
     def handle_view_header_log(self): self.show_header_log()
     def handle_view_proc_run(self): self.show_proc_run_log()
+
+    # --- RESET HANDLING ---
+
+    def handle_invoke_reset(self):
+        """Launches a separate terminal window to run the database reset script."""
+        if messagebox.askyesno("Confirm Reset", "This will open a separate terminal to run dooplerReset.py.\n\n"
+                               "You will be able to interact with the reset program there.\n\n"
+                               "Proceed?"):
+            try:
+                # Command for Windows to open a new cmd window and run the reset script
+                # '/k' keeps the window open after execution so the user can see results
+                os.system("start cmd /k python dooplerReset.py")
+                logger.info("Reset utility terminal spawned.")
+            except Exception as e:
+                messagebox.showerror("Terminal Error", f"Failed to launch terminal: {e}")
 
     # --- RULE MANAGEMENT & INTERACTIVE TOGGLE ---
 
@@ -447,7 +488,7 @@ class DopplerApp:
         finally:
             if conn: conn.close()
 
-        tk.Label(popup, text=f"Update Description for Rule {rid}:", font=("Arial", 10, "bold")).pack(pady=10)
+        tk.Label(popup, text=f"Update Description for Rule {rid}:", font=("Georgia", 10, "bold")).pack(pady=10)
         txt = tk.Text(popup, height=12, width=65, wrap="word", padx=10, pady=10)
         txt.insert("1.0", str(curr_desc)); txt.pack(padx=20, pady=10)
 

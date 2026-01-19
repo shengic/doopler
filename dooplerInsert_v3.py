@@ -2,18 +2,20 @@
 # -*- coding: utf-8 -*-
 """
 File: dooplerInsert_v3.py
-Version: 3.2.0
+Version: 3.2.2
 Features: 
 1. Single-Line Console Refresh: Uses carriage returns (\r) to update progress on one line.
 2. Batch Management: Creates an entry in 'import_run' for every session.
 3. Cascading Deletion: Deleting an import_id removes all associated headers and gates.
 4. Chronological Processing: Files sorted by filename timestamp.
-5. GUI Folder Picker: Easy selection of data directories.
+5. GUI Folder Picker: Easy selection of data directories (Defaults to Script Directory).
+6. Recursive Search: Finds .hpl files in all sub-directories.
 """
 
 import logging
 import re
 import sys
+import os
 import pymysql
 from datetime import datetime
 from typing import Dict, List, Tuple
@@ -53,7 +55,6 @@ logger.addHandler(fh)
 # We manually handle console output to achieve the "Single-Line Refresh" effect.
 def print_progress(msg: str):
     """Refreshes the current console line."""
-    # ljust ensures we clear any characters from longer previous lines
     sys.stdout.write(f"\r{msg.ljust(110)}")
     sys.stdout.flush()
 
@@ -73,7 +74,6 @@ def parse_start_time(s: str) -> datetime:
     return datetime(int(ymd[:4]), int(ymd[4:6]), int(ymd[6:8]), int(hh), int(mm), int(ss), usec)
 
 def load_lines(hpl_path: str) -> List[str]:
-    # We log file reads to the log file, but not the console for clean display
     logger.info("Reading HPL file: %s", hpl_path)
     with open(hpl_path, "r", errors="ignore") as f:
         lines = [ln.rstrip("\n") for ln in f]
@@ -135,16 +135,14 @@ def table_exists(conn, t: str) -> bool:
         return cur.fetchone() is not None
 
 def create_import_run(conn, folder_path: str, files_count: int) -> int:
-    """Create a batch entry and return the import_id"""
     sql = "INSERT INTO `import_run` (folder_path, files_count) VALUES (%s, %s)"
     with conn.cursor() as cur:
         cur.execute(sql, (folder_path, files_count))
         import_id = cur.lastrowid
-    conn.commit()  # Commit immediately so foreign keys can reference it
+    conn.commit() 
     return import_id
 
 def upsert_header_and_get_header_id(conn, h: Dict[str, str], import_id: int) -> int:
-    """Insert or update header with association to import_id"""
     sql = """
     INSERT INTO `doopler`.`wind_profile_header`
       (import_id, filename, system_id, num_gates, range_gate_length_m, gate_length_pts, 
@@ -191,7 +189,6 @@ def upsert_gate_rows(conn, header_id: int, ray_idx: int, dl1: tuple, gates: list
 # =========================
 
 def process_file(conn, path: Path, import_id: int, idx: int, total: int) -> int:
-    # Single-line refresh for console
     print_progress(f"[{idx}/{total}] Processing: {path.name}...")
     
     lines = load_lines(str(path))
@@ -206,8 +203,6 @@ def process_file(conn, path: Path, import_id: int, idx: int, total: int) -> int:
         file_gates += len(gates)
     
     conn.commit()
-    
-    # Second update for console once success
     print_progress(f"[{idx}/{total}] Success: {path.name} ({file_gates} gates)")
     logger.info("Successfully processed file: %s (Total Gates: %d)", path.name, file_gates)
     return file_gates
@@ -215,7 +210,9 @@ def process_file(conn, path: Path, import_id: int, idx: int, total: int) -> int:
 def select_folder() -> str:
     if tk is None: return input("Enter folder path: ").strip().strip('"')
     root = tk.Tk(); root.withdraw(); root.attributes('-topmost', True)
-    folder = filedialog.askdirectory(title="Select folder with .hpl files")
+    # [MODIFIED] Set initialdir to the directory where this script file is located
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    folder = filedialog.askdirectory(title="Select folder with .hpl files", initialdir=script_dir)
     root.destroy()
     return folder
 
@@ -227,12 +224,21 @@ def main():
             return
         
         root = Path(folder)
-        pattern = re.compile(r'^Wind_Profile_[0-9]+_([0-9]{8})_([0-9]{6})\.hpl$', re.IGNORECASE)
-        candidates = [p for p in root.iterdir() if p.is_file() and pattern.match(p.name)]
-        files = sorted(candidates, key=lambda p: datetime.strptime(''.join(pattern.match(p.name).groups()), '%Y%m%d%H%M%S'))
+        # Regex for Wind_Profile_ID_YYYYMMDD_HHMMSS.hpl
+        pattern = re.compile(r'^Wind_Profile_.*_([0-9]{8})_([0-9]{6})\.hpl$', re.IGNORECASE)
+        
+        # Recursive search using rglob("*")
+        candidates = [p for p in root.rglob("*") if p.is_file() and pattern.match(p.name)]
+        
+        # Sort files chronologically based on filename timestamp
+        def get_file_sort_key(p):
+            m = pattern.match(p.name)
+            return datetime.strptime(''.join(m.groups()), '%Y%m%d%H%M%S')
+            
+        files = sorted(candidates, key=get_file_sort_key)
         
         if not files:
-            print(f"No matching .hpl files found in {root}")
+            print(f"No matching .hpl files found in {root} (Check subfolders as well)")
             return
 
         conn = get_connection()
@@ -242,7 +248,6 @@ def main():
                     print(f"Error: Table '{t}' is missing. Check your SQL schema.")
                     return
 
-            # Initialize Batch Session
             import_id = create_import_run(conn, folder, len(files))
             print(f"Session Started | Import ID: {import_id}\n")
 
@@ -257,7 +262,6 @@ def main():
                     print(f"\n[Error] Failed processing {p.name}: {e}")
                     logger.exception("Error processing file %s: %s", p.name, e)
 
-            # Final summary after loops
             print(f"\n\nIMPORT COMPLETED.")
             print(f"Batch ID: {import_id}")
             print(f"Files processed: {processed_count}/{len(files)}")

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # qc_tagging_v2.py
-# Version: 2.3 (Dashboard Integrated + Single Line Progress)
+# Version: 2.4 (Overwrite Mode Enabled + Dashboard Integrated)
 
 import math
 import sys
@@ -13,27 +13,26 @@ from typing import List, Dict, Tuple, Any
 # =========================
 # Logging & Global Setup
 # =========================
-# Ensure logger is defined at the module level
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 logger = logging.getLogger("qc_tagging_v2")
 
 # ---------------------------
-# Parameters (tune as needed)
+# Parameters
 # ---------------------------
 SNR_MIN = 0.015            
 K_SW = 1.5
-TILT_ABS_MAX = 2.0         
-TILT_RSS_MAX = 2.5         
+TILT_ABS_MAX = 2.0          
+TILT_RSS_MAX = 2.5          
 ELEV_MIN, ELEV_MAX = 10.0, 89.9 
 AZ_DUP_TOL = 0.1           
-VR_ABS_MAX = 60.0          
+VR_ABS_MAX = 60.0           
 MAD_K = 3.5
-MIN_RAYS = 3               
+MIN_RAYS = 3                
 MIN_SPAN_DEG = 120.0       
 BIN_DEG = 10.0
-MIN_NONEMPTY_BINS = 3      
+MIN_NONEMPTY_BINS = 3       
 VERT_THR = 2.0             
-NEIGHBOR_STEP = 1          
+NEIGHBOR_STEP = 1           
 
 # =========================
 # Config (Matches doopler.sql)
@@ -176,16 +175,18 @@ def check_gate_uniform_bin_fill(row, ctx):
 # ----------------------
 
 def get_connection():
-    """Provides a consistent connection for main() and external dashboard"""
     return pymysql.connect(
         host=DB_HOST, port=DB_PORT, user=DB_USER, password=DB_PASSWORD, 
         db=DB_NAME, charset="utf8mb4", autocommit=False, 
         cursorclass=pymysql.cursors.DictCursor
     )
 
-def fetch_pending_headers(conn, limit=1000):
-    """Finds headers that need QC"""
-    sql = "SELECT DISTINCT header_id FROM wind_profile_gate WHERE qc_selected=0 AND qc_failed_rule_count=0 LIMIT %s"
+def fetch_all_headers(conn, limit=1000):
+    """
+    [MODIFIED] Overwrite Mode: 
+    Fetch headers regardless of current qc_selected or qc_failed_rule_count values.
+    """
+    sql = "SELECT DISTINCT header_id FROM wind_profile_gate LIMIT %s"
     with conn.cursor() as cur:
         cur.execute(sql, (limit,))
         return [r['header_id'] for r in cur.fetchall()]
@@ -231,17 +232,17 @@ def precompute_gate_context(rows, header):
     }
 
 def run_qc_process(conn):
-    """Primary execution logic for QC tagging"""
     with conn.cursor() as cur:
         cur.execute("SELECT rule_id, def_name FROM vad_rule_qc WHERE is_active=1")
-        rules = [(int(r['rule_id']), r['def_name'], RULE_REGISTRY[r['def_name']]) for r in cur.fetchall() if r['def_name'] in RULE_REGISTRY]
+        active_rules = [(int(r['rule_id']), r['def_name'], RULE_REGISTRY[r['def_name']]) for r in cur.fetchall() if r['def_name'] in RULE_REGISTRY]
     
-    pending = fetch_pending_headers(conn, 2000)
+    # [MODIFIED] Use fetch_all_headers to trigger overwrite
+    pending = fetch_all_headers(conn, 2000)
     if not pending:
-        logger.info("No pending header IDs found.")
+        logger.info("No header IDs found in database.")
         return
 
-    print(f"Found {len(pending)} pending header IDs. Starting...")
+    print(f"Force Overwrite Mode: Processing {len(pending)} headers. Starting...")
     for idx, hid in enumerate(pending, 1):
         try:
             with conn.cursor() as cur:
@@ -250,10 +251,12 @@ def run_qc_process(conn):
                 cur.execute("SELECT * FROM wind_profile_gate WHERE header_id=%s", (hid,))
                 rows = cur.fetchall()
             
+            if not rows or not header: continue
+
             ctx = precompute_gate_context(rows, header)
             updates, pass_cnt, fail_cnt = [], 0, 0
             for i, row in enumerate(rows, 1):
-                f_ids = [r_id for r_id, name, func in rules if not func(row, ctx)[0]]
+                f_ids = [r_id for r_id, name, func in active_rules if not func(row, ctx)[0]]
                 if f_ids: fail_cnt += 1
                 else: pass_cnt += 1
                 updates.append((1 if not f_ids else 0, ",".join(map(str, f_ids)) if f_ids else None, len(f_ids), hid, row['range_gate_index'], row['ray_idx']))
@@ -273,12 +276,11 @@ def run_qc_process(conn):
 # =========================
 
 def main():
-    """Consolidated main entry point for script and dashboard"""
     try:
         conn = get_connection()
         run_qc_process(conn)
         conn.close()
-        print("\n[DONE] QC Tagging Finished.")
+        print("\n[DONE] QC Tagging (Overwrite Mode) Finished.")
     except Exception as e:
         logger.error(f"QC process failed: {e}")
         raise e 

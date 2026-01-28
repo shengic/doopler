@@ -2,11 +2,10 @@
 """
 wind_profile_uvw_v2.py
 ----------------------------
-Version: 2.5.1 (Fixed status truncation error)
-1. [Logic] Full Overwrite: Existing fits are updated with the latest run_id and results.
-2. [Logic] Stale Data Guard: Resets status to 'solve_fail' before processing to ensure compatibility.
-3. [Fix] Mapped 'stale' to 'solve_fail' to avoid MySQL 1265 Data truncated error.
-4. [Fix] Forces 127.0.0.1 for consistent DB access.
+Version: 2.6.1 (Dual Speed: Horizontal in speed_ms, Total in speed_total_ms)
+1. [Math] speed_ms maps to horizontal magnitude (sqrt(u^2+v^2)).
+2. [Math] speed_total_ms maps to 3D magnitude (sqrt(u^2+v^2+w^2)).
+3. [Logic] Full Overwrite Mode enabled.
 """
 
 import math
@@ -67,21 +66,26 @@ def solve_vad_unweighted(az_deg, vr_ms, elev_rad):
     x, _, rank, svals = np.linalg.lstsq(A, vr_ms.astype(float), rcond=None)
     u, v, w = x.tolist()
     
+    # [DUAL SPEED CALCULATION]
+    speed_h = math.hypot(u, v)                # 水平風速
+    speed_total = math.sqrt(u**2 + v**2 + w**2) # 三維總風速
+    
+    # Diagnostics
     yhat = A @ x
     y = vr_ms.astype(float)
     ss_res = float(np.sum((y - yhat) ** 2))
     ss_tot = float(np.sum((y - np.mean(y)) ** 2))
     r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
     rmse = math.sqrt(ss_res / max(len(y) - 3, 1))
-    speed = math.hypot(u, v)
     dir_deg = (math.degrees(math.atan2(u, v)) % 360.0 + 180.0) % 360.0
     
     svals = np.array(svals, dtype=float)
     cond = float(svals[0]/svals[-1]) if (svals.size >= 2 and svals[-1] > 0) else float('inf')
     
     return {
-        "u": u, "v": v, "w": w, "speed": speed, "dir_deg": dir_deg, 
-        "r2": r2, "rmse": rmse, "svd": svals.tolist(), "rank": int(rank), "cond": cond
+        "u": u, "v": v, "w": w, "speed_h": speed_h, "speed_total": speed_total, 
+        "dir_deg": dir_deg, "r2": r2, "rmse": rmse, "svd": svals.tolist(), 
+        "rank": int(rank), "cond": cond
     }
 
 def circular_span_deg(angles_deg):
@@ -92,7 +96,6 @@ def circular_span_deg(angles_deg):
 
 # ===================== Core Logic =====================
 def fetch_solvable_gates(db):
-    """擷取所有符合 QC 條件的 Gate，不論之前是否計算過。"""
     sql = f"""
         SELECT header_id, range_gate_index, COUNT(*) as qualified_count
         FROM {CONFIG['table_gate']} WHERE {CONFIG['cols']['qc']} = 1
@@ -100,7 +103,7 @@ def fetch_solvable_gates(db):
         HAVING qualified_count >= %s
         ORDER BY header_id, range_gate_index
     """
-    logging.info("Querying for qualified gates (Overwrite Mode)...")
+    logging.info("Querying solvable gates...")
     with db.cursor() as cur:
         cur.execute(sql, (CONFIG['min_selected_to_solve'],))
         return cur.fetchall()
@@ -153,9 +156,11 @@ def process_gate_batch(db, target_gates, run_id, rule_tag):
                 "warn_flags": ",".join(warns) if warns else None,
                 "svd_singular_values": ",".join([f"{s:.4f}" for s in sol["svd"]]), 
                 "status": "ok", 
-                "code_version": "v2.5_overwrite",
+                "code_version": "v2.6.1_dual",
                 "u_ms": sol["u"], "v_ms": sol["v"], "w_ms": sol["w"],
-                "speed_ms": sol["speed"], "dir_deg": sol["dir_deg"],
+                "speed_ms": sol["speed_h"],           # 維持水平風速
+                "speed_total_ms": sol["speed_total"], # 新增三維總風速
+                "dir_deg": sol["dir_deg"],
                 "r2": sol["r2"], "rmse_ms": sol["rmse"],
                 "cond_num": sol["cond"], "a_rank": sol["rank"]
             }
@@ -170,7 +175,8 @@ def bulk_upsert(db, records):
     
     keys = [
         "run_id", "rule_tag", "header_id", "range_gate_index", 
-        "u_ms", "v_ms", "w_ms", "speed_ms", "dir_deg", "r2", "rmse_ms", "status", 
+        "u_ms", "v_ms", "w_ms", "speed_ms", "speed_total_ms", 
+        "dir_deg", "r2", "rmse_ms", "status", 
         "n_total_rays", "n_selected_rays", "warn_flags", "code_version",
         "selected_ray_idx_csv", "selected_azimuth_deg_csv", "selected_elevation_deg_csv",
         "svd_singular_values", "cond_num", "a_rank", "az_span_deg"
@@ -179,7 +185,6 @@ def bulk_upsert(db, records):
     values = [[r.get(k) for k in keys] for r in records]
     cols = ", ".join(keys)
     refs = ", ".join(["%s"] * len(keys))
-    # Ensure run_id is also updated during upsert
     updates = ", ".join([f"{k}=VALUES({k})" for k in keys if k not in ["header_id", "range_gate_index"]])
     
     sql = f"INSERT INTO {CONFIG['table_fit']} ({cols}) VALUES ({refs}) ON DUPLICATE KEY UPDATE {updates}"
@@ -188,52 +193,40 @@ def bulk_upsert(db, records):
         cur.executemany(sql, values)
     db.commit()
 
-# ===================== Main Execution =====================
 def main():
     db = DB(CONFIG["mysql"])
     run_id = int(time.time())
-    rule_tag = "VAD_OVERWRITE"
+    rule_tag = "VAD_DUAL_SPEED"
     
     try:
-        # 1. 紀錄批次開始
         with db.cursor() as cur:
             cur.execute(f"INSERT INTO {CONFIG['table_run']} (run_id, rule_tag) VALUES (%s, %s)", (run_id, rule_tag))
         db.commit()
-        logging.info(f"Started Overwrite Run ID: {run_id}")
         
-        # 2. 尋找工作標的
         gates = fetch_solvable_gates(db)
-        if not gates:
-            logging.warning("No solvable gates found.")
-            return
+        if not gates: return
 
-        # [FIXED] 取得所有受影響的 header_id，並預先將其現有 fit 狀態標記為 'solve_fail'
-        # 使用 'solve_fail' 代替 'stale' 以避免 MySQL 1265 ENUM/長度錯誤
         unique_hids = list(set(g['header_id'] for g in gates))
-        logging.info(f"Resetting status for {len(unique_hids)} headers to clear old results...")
+        logging.info(f"Resetting status for {len(unique_hids)} headers...")
         with db.cursor() as cur:
             cur.execute(f"UPDATE {CONFIG['table_fit']} SET status='solve_fail' WHERE header_id IN (%s)" % 
                         ",".join(["%s"]*len(unique_hids)), tuple(unique_hids))
         db.commit()
 
-        logging.info(f"Processing {len(gates)} solvable gates...")
         batch_size = CONFIG["batch_size"]
-        
-        # 3. 執行批次計算
         for i in range(0, len(gates), batch_size):
             batch = gates[i : i + batch_size]
             results = process_gate_batch(db, batch, run_id, rule_tag)
             bulk_upsert(db, results)
-            logging.info(f"Batch {i // batch_size + 1}: Overwritten {len(results)} rows")
+            logging.info(f"Batch {i // batch_size + 1} processed.")
 
-        # 4. 結束批次
         with db.cursor() as cur:
             cur.execute(f"UPDATE {CONFIG['table_run']} SET finished_at=NOW() WHERE run_id=%s", (run_id,))
         db.commit()
-        logging.info("Recalculation and Overwrite Completed Successfully.")
+        logging.info("Completed Successfully.")
 
     except Exception as e:
-        db.rollback(); logging.exception("Error during UVW Calculation")
+        db.rollback(); logging.exception("Error during Calculation")
     finally:
         db.close()
 

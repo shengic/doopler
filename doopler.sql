@@ -11,7 +11,7 @@
  Target Server Version : 80042 (8.0.42)
  File Encoding         : 65001
 
- Date: 27/12/2025 09:36:01
+ Date: 28/01/2026 19:10:13
 */
 
 SET NAMES utf8mb4;
@@ -27,7 +27,7 @@ CREATE TABLE `import_run`  (
   `files_count` int UNSIGNED NULL DEFAULT 0 COMMENT '該次匯入的檔案總數',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`import_id`) USING BTREE
-) ENGINE = InnoDB AUTO_INCREMENT = 2 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci ROW_FORMAT = Dynamic;
+) ENGINE = InnoDB AUTO_INCREMENT = 3 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci ROW_FORMAT = Dynamic;
 
 -- ----------------------------
 -- Table structure for proc_run
@@ -56,6 +56,7 @@ CREATE TABLE `vad_gate_fit`  (
   `v_ms` double NULL DEFAULT NULL COMMENT '北向風速（+向北）',
   `w_ms` double NULL DEFAULT NULL COMMENT '垂直風速（+向上）',
   `speed_ms` double NULL DEFAULT NULL COMMENT '水平風速 = hypot(u,v)',
+  `speed_total_ms` double NULL DEFAULT NULL COMMENT 'total speed sqrt(u^2+v^2+w^2)',
   `dir_deg` decimal(6, 3) NULL DEFAULT NULL COMMENT '風向（來向；北=0，順時針）',
   `r2` double NULL DEFAULT NULL COMMENT '決定係數 R²',
   `rmse_ms` double NULL DEFAULT NULL COMMENT '殘差均方根（m/s）',
@@ -94,6 +95,20 @@ CREATE TABLE `vad_rule_qc`  (
 ) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci ROW_FORMAT = Dynamic;
 
 -- ----------------------------
+-- Table structure for vad_rule_qc_copy1
+-- ----------------------------
+DROP TABLE IF EXISTS `vad_rule_qc_copy1`;
+CREATE TABLE `vad_rule_qc_copy1`  (
+  `rule_id` int NOT NULL,
+  `def_name` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  `rule_code` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NULL DEFAULT NULL,
+  `description` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NULL DEFAULT NULL,
+  `is_active` tinyint(1) NOT NULL DEFAULT 1,
+  `rule_order` int NULL DEFAULT 0,
+  PRIMARY KEY (`rule_id`) USING BTREE
+) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci ROW_FORMAT = Dynamic;
+
+-- ----------------------------
 -- Table structure for wind_profile_gate
 -- ----------------------------
 DROP TABLE IF EXISTS `wind_profile_gate`;
@@ -122,7 +137,7 @@ CREATE TABLE `wind_profile_gate`  (
   INDEX `idx_header_gate`(`header_id` ASC, `range_gate_index` ASC) USING BTREE,
   INDEX `idx_qc_hdr_sel`(`header_id` ASC, `qc_selected` ASC) USING BTREE,
   CONSTRAINT `fk_gate_header` FOREIGN KEY (`header_id`) REFERENCES `wind_profile_header` (`header_id`) ON DELETE CASCADE ON UPDATE RESTRICT
-) ENGINE = InnoDB AUTO_INCREMENT = 621712 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci ROW_FORMAT = Dynamic;
+) ENGINE = InnoDB AUTO_INCREMENT = 2042290 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci ROW_FORMAT = Dynamic;
 
 -- ----------------------------
 -- Table structure for wind_profile_gate_copy1
@@ -181,7 +196,7 @@ CREATE TABLE `wind_profile_header`  (
   UNIQUE INDEX `uq_file_time`(`filename` ASC, `start_time` ASC) USING BTREE,
   INDEX `fk_header_import`(`import_id` ASC) USING BTREE,
   CONSTRAINT `fk_header_import` FOREIGN KEY (`import_id`) REFERENCES `import_run` (`import_id`) ON DELETE CASCADE ON UPDATE RESTRICT
-) ENGINE = InnoDB AUTO_INCREMENT = 313 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci ROW_FORMAT = Dynamic;
+) ENGINE = InnoDB AUTO_INCREMENT = 1024 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci ROW_FORMAT = Dynamic;
 
 -- ----------------------------
 -- Triggers structure for table import_run
